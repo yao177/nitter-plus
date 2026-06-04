@@ -58,7 +58,6 @@ jobs:
 
   integration-test:
     needs: [build-test]
-    if: ${{ secrets.SESSIONS != '' }}
     name: Integration test
     runs-on: ubuntu-24.04
 
@@ -126,20 +125,28 @@ jobs:
         run: chmod +x ./nitter
 
       - name: Prepare Nitter Environment
+        env:
+          SESSIONS: ${{ secrets.SESSIONS }}
         run: |
           cp nitter.example.conf nitter.conf
           sed -i 's/enableDebug = false/enableDebug = true/g' nitter.conf
           sed -i 's/maxRetries = 1/maxRetries = 10/g' nitter.conf
+
+          if [ -z "$SESSIONS" ]; then
+            echo "SKIP_INTEGRATION=true" >> "$GITHUB_ENV"
+            echo "Skipping integration tests because SESSIONS secret is not configured."
+            exit 0
+          fi
 
           # Run both Nimble tasks concurrently
           nim r tools/rendermd.nim &
           nim r tools/gencss.nim &
           wait
 
-          echo '${{ secrets.SESSIONS }}' | head -n1
-          echo '${{ secrets.SESSIONS }}' > ./sessions.jsonl
+          printf '%s\n' "$SESSIONS" > ./sessions.jsonl
 
       - name: Run Tests
+        if: env.SKIP_INTEGRATION != 'true'
         run: |
           ./nitter &
           cd tests
