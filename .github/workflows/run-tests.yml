@@ -22,20 +22,12 @@ jobs:
     name: Build and test
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         nim: ["2.0.x", "2.2.x", "devel"]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
-
-      - name: Cache Nimble Dependencies
-        id: cache-nimble
-        uses: actions/cache@v5
-        with:
-          path: ~/.nimble
-          key: ${{ matrix.nim }}-nimble-v2-${{ hashFiles('*.nimble') }}
-          restore-keys: |
-            ${{ matrix.nim }}-nimble-v2-
 
       - name: Setup Nim
         uses: jiro4989/setup-nim-action@v2
@@ -46,8 +38,11 @@ jobs:
 
       - name: Build Project
         run: |
+          rm -rf "$HOME/.nimble"
+          mkdir -p "$HOME/.nimble"
           nimble install -Y --depsOnly
           nimble build -Y
+          test -x ./nitter
 
       - name: Upload 2.2.x build artifact
         if: matrix.nim == '2.2.x'
@@ -102,14 +97,6 @@ jobs:
         working-directory: tests
         run: poetry sync
 
-      - name: Cache Nimble Dependencies
-        uses: actions/cache@v5
-        with:
-          path: ~/.nimble
-          key: 2.2.x-nimble-v2-${{ hashFiles('*.nimble') }}
-          restore-keys: |
-            2.2.x-nimble-v2-
-
       - name: Setup Nim
         uses: jiro4989/setup-nim-action@v2
         with:
@@ -139,6 +126,10 @@ jobs:
             echo "Skipping integration tests because SESSIONS secret is not configured."
             exit 0
           fi
+
+          rm -rf "$HOME/.nimble"
+          mkdir -p "$HOME/.nimble"
+          nimble install -Y --depsOnly
 
           # Run both Nimble tasks concurrently
           nim r tools/rendermd.nim &
