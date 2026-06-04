@@ -1,9 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import os
 import parsecfg except Config
 import types, strutils
 
 proc get*[T](config: parseCfg.Config; section, key: string; default: T): T =
   let val = config.getSectionValue(section, key)
+  if val.len == 0: return default
+
+  when T is int: parseInt(val)
+  elif T is bool: parseBool(val)
+  elif T is string: val
+
+proc getEnvOverride[T](name: string; default: T): T =
+  let val = getEnv(name)
   if val.len == 0: return default
 
   when T is int: parseInt(val)
@@ -45,6 +54,8 @@ proc getConfig*(path: string): (Config, parseCfg.Config) =
     enableRSSSearch: masterRss and cfg.get("Config", "enableRSSSearch", true),
     enableRSSList: masterRss and cfg.get("Config", "enableRSSList", true),
     enableDebug: cfg.get("Config", "enableDebug", false),
+    enableApi: getEnvOverride("NITTER_ENABLE_API", cfg.get("Config", "enableApi", false)),
+    apiKey: getEnvOverride("NITTER_API_KEY", cfg.get("Config", "apiKey", "")),
     proxy: cfg.get("Config", "proxy", ""),
     proxyAuth: cfg.get("Config", "proxyAuth", ""),
     apiProxy: cfg.get("Config", "apiProxy", ""),

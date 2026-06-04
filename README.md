@@ -19,6 +19,7 @@ Inspired by the [Invidious](https://github.com/iv-org/invidious) project.
 - Uses Twitter's unofficial API (no developer account required)
 - Lightweight (for [@nim_lang](https://nitter.net/nim_lang), 60KB vs 784KB from twitter.com)
 - RSS feeds
+- JSON API
 - Themes
 - Mobile support (responsive design)
 - AGPLv3 licensed, no proprietary instances permitted
@@ -39,7 +40,35 @@ ZEC: u1vndfqtzyy6qkzhkapxelel7ams38wmfeccu3fdpy2wkuc4erxyjm8ncjhnyg747x6t0kf0faq
 - Embeds
 - Account system with timeline support
 - Archiving tweets/profiles
-- Developer API
+
+## JSON API
+
+The JSON API is disabled by default. Enable it in `nitter.conf`:
+
+```ini
+[Config]
+enableApi = true
+apiKey = "change-me"
+```
+
+The same settings can be configured with environment variables:
+
+```bash
+NITTER_ENABLE_API=true
+NITTER_API_KEY=change-me
+```
+
+When `apiKey` is set, send it as `Authorization: Bearer <key>` or `X-API-Key`.
+
+Available endpoints:
+
+- `GET /api/user/@name`
+- `GET /api/user/@name/posts?cursor=...`
+- `GET /api/user/@name/replies?cursor=...`
+- `GET /api/user/@name/media?cursor=...`
+- `GET /api/post/@id?cursor=...`
+- `GET /api/search/posts?q=...&cursor=...`
+- `POST /api/search/posts` with JSON body `{ "q": "...", "cursor": "..." }`
 
 ## Resources
 

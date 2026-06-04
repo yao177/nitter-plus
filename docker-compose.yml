@@ -10,6 +10,9 @@ services:
     volumes:
       - ./nitter.conf:/src/nitter.conf:Z,ro
       - ./sessions.jsonl:/src/sessions.jsonl:Z,ro # Run get_sessions.py to get the credentials
+    # environment:
+    #   NITTER_ENABLE_API: "true"
+    #   NITTER_API_KEY: "change-me"
     depends_on:
       - nitter-redis
     restart: unless-stopped

@@ -337,6 +337,8 @@ type
     enableRSSSearch*: bool
     enableRSSList*: bool
     enableDebug*: bool
+    enableApi*: bool
+    apiKey*: string
     proxy*: string
     proxyAuth*: string
     apiProxy*: string
