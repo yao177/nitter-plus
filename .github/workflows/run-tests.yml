@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        nim: ["2.0.x", "2.2.x", "devel"]
+        nim: ["2.0.x", "2.2.0"]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
@@ -44,11 +44,11 @@ jobs:
           nimble build -Y
           test -x ./nitter
 
-      - name: Upload 2.2.x build artifact
-        if: matrix.nim == '2.2.x'
+      - name: Upload 2.2.0 build artifact
+        if: matrix.nim == '2.2.0'
         uses: actions/upload-artifact@v6
         with:
-          name: nitter-linux-nim-2.2.x-${{ github.sha }}
+          name: nitter-linux-nim-2.2.0-${{ github.sha }}
           path: |
             ./nitter
           if-no-files-found: error
@@ -100,14 +100,14 @@ jobs:
       - name: Setup Nim
         uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: 2.2.x
+          nim-version: 2.2.0
           use-nightlies: true
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download 2.2.x build artifact
+      - name: Download 2.2.0 build artifact
         uses: actions/download-artifact@v4
         with:
-          name: nitter-linux-nim-2.2.x-${{ github.sha }}
+          name: nitter-linux-nim-2.2.0-${{ github.sha }}
           path: .
 
       - name: Make nitter binary executable
