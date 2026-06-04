@@ -45,7 +45,9 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Project
-        run: nimble build -Y
+        run: |
+          nimble install -Y --depsOnly
+          nimble build -Y
 
       - name: Upload 2.2.x build artifact
         if: matrix.nim == '2.2.x'
