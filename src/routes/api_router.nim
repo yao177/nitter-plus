@@ -4,7 +4,7 @@ import asyncdispatch, json, options, sequtils, strutils, tables, times
 import jester
 
 import router_utils
-import ".."/[api, formatters, query, redis_cache, types]
+import ".."/[api, formatters, query, redis_cache, types, utils]
 
 export json
 
@@ -33,11 +33,46 @@ proc verifiedToJson(verifiedType: VerifiedType): JsonNode =
   else:
     %($verifiedType)
 
+const twitterBaseUrl = "https://x.com"
+
+proc isAbsoluteUrl(url: string): bool =
+  url.startsWith("http://") or url.startsWith("https://")
+
+proc toTwitterMediaUrl(url: string): string =
+  if url.len == 0 or url.startsWith('#') or url.isAbsoluteUrl:
+    return url
+
+  let normalized =
+    if url.startsWith('/'):
+      url[1 .. ^1]
+    else:
+      url
+
+  let slashIdx = normalized.find('/')
+  let host =
+    if slashIdx >= 0: normalized[0 ..< slashIdx]
+    else: normalized
+
+  if '.' in host:
+    return https & normalized
+
+  https & twimg & normalized
+
+proc toTwitterStatusUrl(tweet: Tweet): string =
+  if tweet.isNil or tweet.id == 0:
+    return ""
+
+  var username = tweet.user.username
+  if username.len == 0:
+    username = "i"
+
+  twitterBaseUrl & "/" & username & "/status/" & $tweet.id
+
 proc videoVariantToJson(variant: VideoVariant): JsonNode =
   %*{
     "bitrate": variant.bitrate,
     "contentType": $variant.contentType,
-    "url": variant.url,
+    "url": toTwitterMediaUrl(variant.url),
     "resolution": variant.resolution
   }
 
@@ -49,8 +84,8 @@ proc userToJson*(user: User): JsonNode =
     "bio": stripHtml(user.bio),
     "location": user.location,
     "website": user.website,
-    "avatar": user.getUserPic("_400x400"),
-    "banner": user.banner,
+    "avatar": toTwitterMediaUrl(user.getUserPic("_400x400")),
+    "banner": toTwitterMediaUrl(user.banner),
     "following": user.following,
     "followers": user.followers,
     "posts": user.tweets,
@@ -66,15 +101,15 @@ proc mediaToJson(media: Media): JsonNode =
   of photoMedia:
     %*{
       "type": "photo",
-      "url": media.photo.url,
+      "url": toTwitterMediaUrl(media.photo.url),
       "altText": media.photo.altText
     }
   of videoMedia:
     let variants = media.video.variants.filterIt(it.url.len > 0)
     %*{
       "type": "video",
-      "url": media.video.getVideoUrl,
-      "thumbnail": media.video.thumb,
+      "url": toTwitterMediaUrl(media.video.getVideoUrl),
+      "thumbnail": toTwitterMediaUrl(media.video.thumb),
       "available": media.video.available,
       "reason": media.video.reason,
       "durationMs": media.video.durationMs,
@@ -84,8 +119,8 @@ proc mediaToJson(media: Media): JsonNode =
   of gifMedia:
     %*{
       "type": "gif",
-      "url": media.gif.url,
-      "thumbnail": media.gif.thumb,
+      "url": toTwitterMediaUrl(media.gif.url),
+      "thumbnail": toTwitterMediaUrl(media.gif.thumb),
       "altText": media.gif.altText
     }
 
@@ -113,7 +148,7 @@ proc tweetToJson*(tweet: Tweet; includeQuote=true): JsonNode =
     "id": $tweet.id,
     "threadId": $tweet.threadId,
     "replyId": $tweet.replyId,
-    "url": "/$1/status/$2" % [tweet.user.username, $tweet.id],
+    "url": toTwitterStatusUrl(tweet),
     "user": userToJson(tweet.user),
     "text": stripHtml(tweet.text),
     "html": tweet.text,
