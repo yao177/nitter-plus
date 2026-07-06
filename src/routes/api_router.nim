@@ -33,6 +33,14 @@ proc verifiedToJson(verifiedType: VerifiedType): JsonNode =
   else:
     %($verifiedType)
 
+proc videoVariantToJson(variant: VideoVariant): JsonNode =
+  %*{
+    "bitrate": variant.bitrate,
+    "contentType": $variant.contentType,
+    "url": variant.url,
+    "resolution": variant.resolution
+  }
+
 proc userToJson*(user: User): JsonNode =
   %*{
     "id": user.id,
@@ -62,14 +70,16 @@ proc mediaToJson(media: Media): JsonNode =
       "altText": media.photo.altText
     }
   of videoMedia:
+    let variants = media.video.variants.filterIt(it.url.len > 0)
     %*{
       "type": "video",
-      "url": media.video.url,
+      "url": media.video.getVideoUrl,
       "thumbnail": media.video.thumb,
       "available": media.video.available,
       "reason": media.video.reason,
       "durationMs": media.video.durationMs,
-      "playbackType": $media.video.playbackType
+      "playbackType": $media.video.getPlayablePlaybackType,
+      "variants": variants.mapIt(videoVariantToJson(it))
     }
   of gifMedia:
     %*{

@@ -44,6 +44,9 @@ jobs:
           nimble build -Y
           test -x ./nitter
 
+      - name: Run API serialization tests
+        run: nim c -r tests/test_api_json.nim
+
       - name: Upload 2.2.0 build artifact
         if: matrix.nim == '2.2.0'
         uses: actions/upload-artifact@v6
@@ -141,6 +144,6 @@ jobs:
       - name: Run Tests
         if: env.SKIP_INTEGRATION != 'true'
         run: |
-          ./nitter &
+          NITTER_ENABLE_API=true ./nitter &
           cd tests
           poetry run pytest -n3 --reruns=5 --rs .

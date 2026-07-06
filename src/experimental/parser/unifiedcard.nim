@@ -2,7 +2,7 @@ import std/[options, tables, strutils, strformat, sugar]
 import jsony
 import user, ../types/unifiedcard
 import ../../formatters
-from ../../types import Card, CardKind, Video
+from ../../types import Card, CardKind, Video, normalizeVideo
 from ../../utils import twimg, https
 
 proc getImageUrl(entity: MediaEntity): string =
@@ -68,13 +68,15 @@ proc parseMedia(component: Component; card: UnifiedCard; result: var Card) =
     result.image = rMedia.getImageUrl
   of video:
     let videoInfo = rMedia.videoInfo.get
-    result.kind = promoVideo
-    result.video = some Video(
+    var video = Video(
       available: true,
       thumb: rMedia.getImageUrl,
       durationMs: videoInfo.durationMillis,
       variants: videoInfo.variants
     )
+    video.normalizeVideo()
+    result.kind = promoVideo
+    result.video = some video
   of model3d:
     result.title = "Unsupported 3D model ad"
 

@@ -371,6 +371,53 @@ proc getPhotos*(tweet: Tweet): seq[Photo] =
 proc getVideos*(tweet: Tweet): seq[Video] =
   tweet.media.filterIt(it.kind == videoMedia).mapIt(it.video)
 
+proc getVariants*(video: Video; playbackType: VideoType): seq[VideoVariant] =
+  video.variants.filterIt(it.contentType == playbackType and it.url.len > 0)
+
+proc hasVariant*(video: Video; playbackType: VideoType): bool =
+  video.getVariants(playbackType).len > 0
+
+proc getPlayablePlaybackType*(video: Video): VideoType =
+  if video.hasVariant(video.playbackType):
+    return video.playbackType
+  if video.hasVariant(m3u8):
+    return m3u8
+  if video.hasVariant(mp4):
+    return mp4
+  if video.hasVariant(vmap):
+    return vmap
+  video.playbackType
+
+proc getPreferredVariant*(video: Video; playbackType: VideoType): Option[VideoVariant] =
+  var
+    best: VideoVariant
+    found = false
+
+  for variant in video.variants:
+    if variant.contentType != playbackType or variant.url.len == 0:
+      continue
+
+    if not found or variant.resolution > best.resolution or
+       (variant.resolution == best.resolution and variant.bitrate >= best.bitrate):
+      best = variant
+      found = true
+
+  if found:
+    result = some(best)
+
+proc getPreferredVariant*(video: Video): Option[VideoVariant] =
+  video.getPreferredVariant(video.getPlayablePlaybackType)
+
+proc getVideoUrl*(video: Video): string =
+  let variant = video.getPreferredVariant()
+  if variant.isSome:
+    return variant.get.url
+  video.url
+
+proc normalizeVideo*(video: var Video) =
+  video.playbackType = video.getPlayablePlaybackType
+  video.url = video.getVideoUrl
+
 proc hasPhotos*(tweet: Tweet): bool =
   tweet.media.anyIt(it.kind == photoMedia)
 

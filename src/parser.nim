@@ -202,6 +202,7 @@ proc parseVideo(js: JsonNode): Video =
     result.description = description.getStr
 
   result.variants = parseVideoVariants(js{"video_info", "variants"})
+  result.normalizeVideo()
 
 proc addMedia(media: var MediaEntities; photo: Photo) =
   media.add Media(kind: photoMedia, photo: photo)
@@ -254,13 +255,15 @@ proc parseMediaEntities(js: JsonNode; result: var Tweet) =
           ))
         of "ApiVideo":
           let status = mediaEntity{"media_results", "result", "media_availability_v2", "status"}
-          parsedMedia.addMedia(Video(
+          var video = Video(
             available: status.getStr == "Available",
             thumb: mediaInfo{"preview_image", "original_img_url"}.getImageStr,
             title: mediaInfo{"alt_text"}.getStr,
             durationMs: mediaInfo{"duration_millis"}.getInt,
             variants: parseVideoVariants(mediaInfo{"variants"})
-          ))
+          )
+          video.normalizeVideo()
+          parsedMedia.addMedia(video)
         of "ApiGif":
           parsedMedia.addMedia(Gif(
             url: mediaInfo{"variants"}[0]{"url"}.getImageStr,
@@ -305,6 +308,7 @@ proc parsePromoVideo(js: JsonNode): Video =
     result.playbackType = m3u8
 
   result.variants.add variant
+  result.normalizeVideo()
 
 proc parseBroadcast(js: JsonNode): Card =
   let
@@ -319,6 +323,7 @@ proc parseBroadcast(js: JsonNode): Card =
     text: js{"broadcast_title"}.getStrVal,
     image: image,
     video: some Video(
+      url: streamUrl,
       thumb: image,
       available: true,
       playbackType: m3u8,

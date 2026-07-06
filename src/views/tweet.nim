@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-import strutils, sequtils, strformat, options, algorithm
+import strutils, sequtils, strformat, options
 import karax/[karaxdsl, vdom, vstyles]
 from jester import Request
 
@@ -60,7 +60,7 @@ proc isPlaybackEnabled(prefs: Prefs; playbackType: VideoType): bool =
   of m3u8, vmap: prefs.hlsPlayback
 
 proc hasMp4Url(video: Video): bool =
-  video.variants.anyIt(it.contentType == mp4)
+  video.hasVariant(mp4)
 
 proc renderVideoDisabled(playbackType: VideoType; path=""): VNode =
   buildHtml(tdiv(class="video-overlay")):
@@ -81,7 +81,7 @@ proc renderVideoUnavailable(video: Video): VNode =
 proc renderVideoAttachment(videoData: Video; prefs: Prefs; path=""; bigThumb=false): VNode =
   let
     playbackType = if not prefs.proxyVideos and videoData.hasMp4Url: mp4
-                   else: videoData.playbackType
+                   else: videoData.getPlayablePlaybackType
     thumb = if bigThumb: getMediumPic(videoData.thumb) else: getSmallPic(videoData.thumb)
 
   buildHtml(tdiv(class="attachment")):
@@ -93,8 +93,8 @@ proc renderVideoAttachment(videoData: Video; prefs: Prefs; path=""; bigThumb=fal
       renderVideoDisabled(playbackType, path)
     else:
       let
-        vars = videoData.variants.filterIt(it.contentType == playbackType)
-        vidUrl = vars.sortedByIt(it.resolution)[^1].url
+        variant = videoData.getPreferredVariant(playbackType)
+        vidUrl = if variant.isSome: variant.get.url else: videoData.getVideoUrl
         source = if prefs.proxyVideos and vidUrl.startsWith("http"):
                    getVidUrl(vidUrl) else: vidUrl
       case playbackType
