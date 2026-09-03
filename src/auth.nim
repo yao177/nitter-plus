@@ -10,6 +10,8 @@ var
   enableLogging = false
   # max requests at a time per session to avoid race conditions
   maxConcurrentReqs = 2
+  # minimum requests to reserve before selecting a session
+  minimumTokens = 10
 
 proc setMaxConcurrentReqs*(reqs: int) =
   if reqs > 0:
@@ -157,7 +159,7 @@ proc isLimited(session: Session; req: ApiReq): bool =
 
   if api in session.apis:
     let limit = session.apis[api]
-    return limit.remaining <= 10 and limit.reset > epochTime().int
+    return limit.remaining <= minimumTokens and limit.reset > epochTime().int
   else:
     return false
 
@@ -212,6 +214,7 @@ proc setRateLimit*(session: Session; req: ApiReq; remaining, reset, limit: int) 
 
 proc initSessionPool*(cfg: Config; path: string) =
   enableLogging = cfg.enableDebug
+  minimumTokens = cfg.minTokens
 
   if path.endsWith(".json"):
     log "ERROR: .json is not supported, the file must be a valid JSONL file ending in .jsonl"

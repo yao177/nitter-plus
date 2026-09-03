@@ -65,4 +65,7 @@ proc getConfig*(path: string): (Config, parseCfg.Config) =
     retryDelayMs: cfg.get("Config", "retryDelayMs", 150)
   )
 
+  if conf.minTokens < 0:
+    raise newException(ValueError, "Config.tokenCount must be nonnegative")
+
   return (conf, cfg)

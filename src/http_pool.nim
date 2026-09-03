@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-import httpclient
+import httpclient, net
 
 type
   HttpPool* = ref object
@@ -39,11 +39,17 @@ template use*(pool: HttpPool; heads: HttpHeaders; body: untyped): untyped =
 
   try:
     body
-  except BadClientError, ProtocolError:
-    # Twitter returned 503 or closed the connection, we need a new client
+  except BadClientError, ProtocolError, IOError, OSError, SslError:
+    # Twitter returned 503 or the connection failed, so discard the client
+    # and retry once with a fresh connection. Keep the replacement out of the
+    # pool if that retry fails too.
     pool.release(c, true)
     badClient = false
     c = pool.acquire(heads)
-    body
+    try:
+      body
+    except BadClientError, ProtocolError, IOError, OSError, SslError:
+      badClient = true
+      raise
   finally:
     pool.release(c, badClient)

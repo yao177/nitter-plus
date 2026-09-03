@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-import httpclient, asyncdispatch, options, strutils, uri, times, math, tables
+import httpclient, net, asyncdispatch, options, strutils, uri, times, math, tables
 import jsony, packedjson, zippy, oauth1
 import types, auth, consts, parserutils, http_pool, tid
 import experimental/types/common
@@ -168,8 +168,14 @@ template fetchImpl(result, fetchBody) {.dirty.} =
     raise e
   except BadClientError as e:
     raise e
+  except SslError as e:
+    raise newException(BadClientError, e.msg)
+  except ProtocolError as e:
+    raise newException(BadClientError, e.msg)
+  except IOError as e:
+    raise newException(BadClientError, e.msg)
   except OSError as e:
-    raise e
+    raise newException(BadClientError, e.msg)
   except Exception as e:
     let s = session.pretty
     echo "error: ", e.name, ", msg: ", e.msg, ", session: ", s, ", url: ", url
@@ -179,10 +185,12 @@ template fetchImpl(result, fetchBody) {.dirty.} =
 
 template retry(bod) {.dirty.} =
   var session: Session
+  var exhausted = true
   for i in 0 ..< maxRetries:
     try:
       session = nil
       bod
+      exhausted = false
       break
     except RateLimitError:
       let api = if session.isNil: req.cookie.endpoint
@@ -196,6 +204,8 @@ template retry(bod) {.dirty.} =
       session = nil
       if retryDelayMs > 0:
         await sleepAsync(retryDelayMs)
+  if exhausted:
+    raise rateLimitError()
 
 proc fetch*(req: ApiReq): Future[JsonNode] {.async.} =
   retry:

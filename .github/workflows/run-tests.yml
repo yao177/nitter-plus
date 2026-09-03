@@ -45,7 +45,12 @@ jobs:
           test -x ./nitter
 
       - name: Run API serialization tests
-        run: nim c -r tests/test_api_json.nim
+        run: |
+          nim c -r tests/test_api_json.nim
+          nim c -r tests/test_config.nim
+
+      - name: Run HTTP pool transport tests
+        run: nim c -r -d:ssl tests/test_http_pool_transport.nim
 
       - name: Upload 2.2.0 build artifact
         if: matrix.nim == '2.2.0'

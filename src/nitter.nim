@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-import asyncdispatch, strformat, logging
+import asyncdispatch, strformat, strutils, logging
 from net import Port
 from htmlgen import a
 from os import getEnv
@@ -102,17 +102,26 @@ routes:
 
   error BadClientError:
     echo error.exc.name, ": ", error.exc.msg
-    resp Http500, showError("Network error occurred, please try again.", cfg)
+    if request.path.startsWith("/api/"):
+      resp Http503, jsonHeaders, $jsonError("provider_unavailable")
+    else:
+      resp Http503, showError("Network error occurred, please try again.", cfg)
 
   error RateLimitError:
-    const link = a("another instance", href = instancesUrl)
-    resp Http429, showError(
-      &"Instance has been rate limited.<br>Use {link} or try again later.", cfg)
+    if request.path.startsWith("/api/"):
+      resp Http429, jsonHeaders, $jsonError("provider_rate_limited")
+    else:
+      const link = a("another instance", href = instancesUrl)
+      resp Http429, showError(
+        &"Instance has been rate limited.<br>Use {link} or try again later.", cfg)
 
   error NoSessionsError:
-    const link = a("another instance", href = instancesUrl)
-    resp Http429, showError(
-      &"Instance has no auth tokens, or is fully rate limited.<br>Use {link} or try again later.", cfg)
+    if request.path.startsWith("/api/"):
+      resp Http429, jsonHeaders, $jsonError("provider_rate_limited")
+    else:
+      const link = a("another instance", href = instancesUrl)
+      resp Http429, showError(
+        &"Instance has no auth tokens, or is fully rate limited.<br>Use {link} or try again later.", cfg)
 
   extend rss, ""
   extend status, ""
