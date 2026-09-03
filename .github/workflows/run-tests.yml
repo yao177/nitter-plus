@@ -24,10 +24,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        nim: ["2.0.x", "2.2.0"]
+        nim: ["2.0.x", "2.2.x", "devel"]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
+
+      - name: Cache Nimble Dependencies
+        id: cache-nimble
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.nimble/pkgcache
+            ~/.nimble/packages_official.json
+          key: ${{ matrix.nim }}-nimble-v6-${{ hashFiles('*.nimble') }}
+          restore-keys: |
+            ${{ matrix.nim }}-nimble-v6-
 
       - name: Setup Nim
         uses: jiro4989/setup-nim-action@v2
@@ -43,8 +54,6 @@ jobs:
 
       - name: Build Project
         run: |
-          rm -rf "$HOME/.nimble"
-          mkdir -p "$HOME/.nimble"
           nimble install -Y --depsOnly
           nimble build -Y
           test -x ./nitter
@@ -59,11 +68,11 @@ jobs:
       - name: Run HTTP pool transport tests
         run: nim c -r -d:ssl tests/test_http_pool_transport.nim
 
-      - name: Upload 2.2.0 build artifact
-        if: matrix.nim == '2.2.0'
+      - name: Upload 2.2.x build artifact
+        if: matrix.nim == '2.2.x'
         uses: actions/upload-artifact@v6
         with:
-          name: nitter-linux-nim-2.2.0-${{ github.sha }}
+          name: nitter-linux-nim-2.2.x-${{ github.sha }}
           path: |
             ./nitter
           if-no-files-found: error
@@ -72,6 +81,7 @@ jobs:
     needs: [build-test]
     name: Integration test
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     services:
       redis:
@@ -112,17 +122,30 @@ jobs:
         working-directory: tests
         run: poetry sync
 
+      - name: Cache Nimble Dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.nimble/pkgcache
+            ~/.nimble/packages_official.json
+          key: 2.2.x-nimble-v6-${{ hashFiles('*.nimble') }}
+          restore-keys: |
+            2.2.x-nimble-v6-
+
       - name: Setup Nim
         uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: 2.2.0
+          nim-version: 2.2.x
           use-nightlies: true
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download 2.2.0 build artifact
+      - name: Install Nimble dependencies
+        run: nimble install -y --depsOnly
+
+      - name: Download 2.2.x build artifact
         uses: actions/download-artifact@v4
         with:
-          name: nitter-linux-nim-2.2.0-${{ github.sha }}
+          name: nitter-linux-nim-2.2.x-${{ github.sha }}
           path: .
 
       - name: Make nitter binary executable
@@ -134,17 +157,14 @@ jobs:
         run: |
           cp nitter.example.conf nitter.conf
           sed -i 's/enableDebug = false/enableDebug = true/g' nitter.conf
-          sed -i 's/maxRetries = 1/maxRetries = 10/g' nitter.conf
+          sed -i 's/maxRetries = 1/maxRetries = 3/g' nitter.conf
+          sed -i 's/hostname = "nitter.net"/hostname = "localhost:8080"/g' nitter.conf
 
           if [ -z "$SESSIONS" ]; then
             echo "SKIP_INTEGRATION=true" >> "$GITHUB_ENV"
             echo "Skipping integration tests because SESSIONS secret is not configured."
             exit 0
           fi
-
-          rm -rf "$HOME/.nimble"
-          mkdir -p "$HOME/.nimble"
-          nimble install -Y --depsOnly
 
           # Run both Nimble tasks concurrently
           nim r tools/rendermd.nim &
@@ -158,4 +178,4 @@ jobs:
         run: |
           NITTER_ENABLE_API=true ./nitter &
           cd tests
-          poetry run pytest -n3 --reruns=5 --rs .
+          poetry run pytest -n2 --rs .

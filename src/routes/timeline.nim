@@ -12,11 +12,22 @@ export router_utils
 export redis_cache, formatters, query, api
 export profile, timeline, status, about_account
 
+proc tabRssEnabled*(cfg: Config; tab: string): bool =
+  case tab
+  of "": cfg.enableRSSUserTweets
+  of "with_replies": cfg.enableRSSUserReplies
+  of "media": cfg.enableRSSUserMedia
+  of "articles": cfg.enableRSSUserArticles
+  of "search": cfg.enableRSSSearch
+  else: false
+
 proc getQuery*(request: Request; tab, name: string; prefs: Prefs): Query =
   let view = request.params.getOrDefault("view")
   case tab
   of "with_replies":
     result = getReplyQuery(name)
+  of "articles":
+    result = getArticlesQuery(name)
   of "media":
     result = getMediaQuery(name)
     result.view =
@@ -53,7 +64,7 @@ proc fetchProfile*(after: string; query: Query; skipRail=false): Future[Profile]
 
   let
     rail =
-      skipIf(skipRail or query.kind == media, @[]):
+      skipIf(skipRail or query.kind == QueryKind.media, @[]):
         getCachedPhotoRail(userId)
 
     user = getCachedUser(name)
@@ -64,6 +75,7 @@ proc fetchProfile*(after: string; query: Query; skipRail=false): Future[Profile]
     of posts: await getGraphUserTweets(userId, TimelineKind.tweets, after)
     of replies: await getGraphUserTweets(userId, TimelineKind.replies, after)
     of media: await getGraphUserTweets(userId, TimelineKind.media, after)
+    of QueryKind.articles: await getGraphUserTweets(userId, TimelineKind.articles, after)
     else: Profile(tweets: await getGraphTweetSearch(query, after))
 
   result.user = await user
@@ -135,11 +147,46 @@ proc createTimelineRouter*(cfg: Config) =
       resp renderMain(aboutHtml, request, cfg, prefs,
                       "About @" & info.username)
 
+    get "/@name/@kind/?":
+      cond @"kind" in ["followers", "following"]
+      cond '.' notin @"name"
+      cond @"name".allCharsInSet({'a'..'z', 'A'..'Z', '0'..'9', '_'})
+      let
+        prefs = requestPrefs()
+        name = @"name"
+        userId = await getUserId(name)
+
+      if userId.len == 0:
+        resp Http404, showError("User \"" & name & "\" not found", cfg)
+      if userId == "suspended":
+        resp showError(getSuspended(name), cfg)
+
+      let
+        cursor = getCursor()
+        isFollowers = @"kind" == "followers"
+        user = await getCachedUser(name)
+        results = if isFollowers: await getGraphFollowers(userId, cursor)
+                  else: await getGraphFollowing(userId, cursor)
+
+      if user.protected:
+        resp renderMain(renderProtected(user.username), request, cfg, prefs,
+                        "Protected account @" & name)
+
+      let
+        tab = if isFollowers: "Followers" else: "Following"
+        title = (if isFollowers: "People following @" else: "People followed by @") & name
+        html = renderUserList(user, results, prefs, request.path, tab)
+
+      resp renderMain(html, request, cfg, prefs, title,
+                      images = @[user.getUserPic("_400x400")])
+
     get "/@name/?@tab?/?":
       cond '.' notin @"name"
       cond @"name" notin ["pic", "gif", "video", "search", "settings", "login", "intent", "i"]
       cond @"name".allCharsInSet({'a'..'z', 'A'..'Z', '0'..'9', '_', ','})
-      cond @"tab" in ["with_replies", "media", "search", ""]
+      cond @"tab" in ["with_replies", "media", "search", "articles", ""]
+      # articles can't be approximated by search, so multi-user is unsupported
+      cond not (@"tab" == "articles" and ',' in @"name")
       let
         prefs = requestPrefs()
         after = getCursor()
@@ -163,15 +210,8 @@ proc createTimelineRouter*(cfg: Config) =
           profile.tweets.beginning = true
           resp $renderTimelineTweets(profile.tweets, prefs, getPath())
 
-      let rssEnabled =
-        if @"tab".len == 0: cfg.enableRSSUserTweets
-        elif @"tab" == "with_replies": cfg.enableRSSUserReplies
-        elif @"tab" == "media": cfg.enableRSSUserMedia
-        elif @"tab" == "search": cfg.enableRSSSearch
-        else: false
-
       let rss =
-        if not rssEnabled: 
+        if not cfg.tabRssEnabled(@"tab"):
           ""
         elif @"tab".len == 0:
           "/$1/rss" % @"name"

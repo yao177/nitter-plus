@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import httpclient, net, asyncdispatch, options, strutils, uri, times, math, tables
-import jsony, packedjson, zippy, oauth1
+import jsony, packedjson, zippy, oauth/oauth1
 import types, auth, consts, parserutils, http_pool, tid
 import experimental/types/common
 
@@ -8,7 +8,22 @@ const
   rlRemaining = "x-rate-limit-remaining"
   rlReset = "x-rate-limit-reset"
   rlLimit = "x-rate-limit-limit"
+  npCache = "x-np-cache"
   errorsToSkip = {null, doesntExist, tweetNotFound, timeout, unauthorized, badRequest}
+
+proc isCloudflareHtml*(body: string): bool =
+  ## Detect Cloudflare HTML error pages returned instead of JSON
+  if body.len < 14 or body[0] != '<': return false
+  body[0 ..< 14].toLowerAscii() == "<!doctype html" and "Cloudflare" in body
+
+proc cfTitle*(body: string): string =
+  ## Extract <title> from Cloudflare HTML for log diagnostics
+  let start = body.find("<title>")
+  if start < 0: return "unknown"
+  let contentStart = start + 7
+  let stop = body.find("</title>", contentStart)
+  if stop < 0: return "unknown"
+  body[contentStart ..< stop].splitWhitespace().join(" ")
 
 var
   pool: HttpPool
@@ -33,7 +48,7 @@ proc setApiProxy*(url: string) =
     if "http" notin apiProxy:
       apiProxy = "http://" & apiProxy
 
-proc toUrl(req: ApiReq; sessionKind: SessionKind): Uri =
+proc toUrl*(req: ApiReq; sessionKind: SessionKind): Uri =
   let url = case sessionKind
     of oauth:  req.oauth
     of cookie: req.cookie
@@ -63,19 +78,18 @@ proc getOauthHeader(url, oauthToken, oauthTokenSecret: string): string =
 proc getCookieHeader(authToken, ct0: string): string =
   "auth_token=" & authToken & "; ct0=" & ct0
 
-proc genHeaders*(session: Session, url: Uri): Future[HttpHeaders] {.async.} =
+proc genHeaders*(session: Session, url: Uri, skipTid: bool): Future[HttpHeaders] {.async.} =
   result = newHttpHeaders({
     "accept": "*/*",
     "accept-encoding": "gzip",
     "accept-language": "en-US,en;q=0.9",
-    "connection": "keep-alive",
     "content-type": "application/json",
     "origin": "https://x.com",
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
     "x-twitter-active-user": "yes",
     "x-twitter-client-language": "en",
     "priority": "u=1, i"
-  })
+  }, titleCase=true)
 
   case session.kind
   of SessionKind.oauth:
@@ -84,13 +98,14 @@ proc genHeaders*(session: Session, url: Uri): Future[HttpHeaders] {.async.} =
     result["x-twitter-auth-type"] = "OAuth2Session"
     result["x-csrf-token"] = session.ct0
     result["cookie"] = getCookieHeader(session.authToken, session.ct0)
+    result["referer"] = "https://x.com/"
     result["sec-ch-ua"] = """"Google Chrome";v="142", "Chromium";v="142", "Not A(Brand";v="24""""
     result["sec-ch-ua-mobile"] = "?0"
     result["sec-ch-ua-platform"] = "Windows"
     result["sec-fetch-dest"] = "empty"
     result["sec-fetch-mode"] = "cors"
-    result["sec-fetch-site"] = "same-site"
-    if disableTid or "/1.1/" in url.path:
+    result["sec-fetch-site"] = "same-origin"
+    if disableTid or skipTid or "/1.1/" in url.path:
       result["authorization"] = bearerToken2
     else:
       result["authorization"] = bearerToken
@@ -114,7 +129,12 @@ template fetchImpl(result, fetchBody) {.dirty.} =
 
   try:
     var resp: AsyncResponse
-    pool.use(await genHeaders(session, url)):
+    let skipTid = case session.kind
+      of oauth: req.oauth.skipTid
+      of cookie: req.cookie.skipTid
+    let headers = await genHeaders(session, url, skipTid)
+
+    pool.use(headers):
       template getContent =
         # TODO: this is a temporary simple implementation
         if apiProxy.len > 0 and "/1.1/" notin url.path:
@@ -133,7 +153,8 @@ template fetchImpl(result, fetchBody) {.dirty.} =
         echo "[sessions] transient 404 (empty body), retrying: ", url.path, ", session: ", session.pretty
         raise rateLimitError()
 
-    if resp.headers.hasKey(rlRemaining):
+    let cacheStatus = resp.headers.getOrDefault(npCache)
+    if cacheStatus notin ["HIT", "STALE"] and resp.headers.hasKey(rlRemaining):
       let
         remaining = parseInt(resp.headers[rlRemaining])
         reset = parseInt(resp.headers[rlReset])
@@ -143,6 +164,10 @@ template fetchImpl(result, fetchBody) {.dirty.} =
     if result.len > 0:
       if resp.headers.getOrDefault("content-encoding") == "gzip":
         result = uncompress(result, dfGzip)
+
+      if isCloudflareHtml(result):
+        echo "[cloudflare] ", resp.status, " (", cfTitle(result), "), API: ", url.path, ", session: ", session.pretty
+        raise rateLimitError()
 
       if result.startsWith("{\"errors"):
         let errors = result.fromJson(Errors)
@@ -185,12 +210,12 @@ template fetchImpl(result, fetchBody) {.dirty.} =
 
 template retry(bod) {.dirty.} =
   var session: Session
-  var exhausted = true
+  var retrySuccess = false
   for i in 0 ..< maxRetries:
     try:
       session = nil
       bod
-      exhausted = false
+      retrySuccess = true
       break
     except RateLimitError:
       let api = if session.isNil: req.cookie.endpoint
@@ -204,7 +229,7 @@ template retry(bod) {.dirty.} =
       session = nil
       if retryDelayMs > 0:
         await sleepAsync(retryDelayMs)
-  if exhausted:
+  if not retrySuccess:
     raise rateLimitError()
 
 proc fetch*(req: ApiReq): Future[JsonNode] {.async.} =
