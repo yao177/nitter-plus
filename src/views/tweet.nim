@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-import strutils, sequtils, strformat, options
+import strutils, sequtils, strformat, options, algorithm
 import karax/[karaxdsl, vdom, vstyles]
 from jester import Request
 
