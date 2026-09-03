@@ -103,13 +103,15 @@ routes:
   error BadClientError:
     echo error.exc.name, ": ", error.exc.msg
     if request.path.startsWith("/api/"):
-      resp Http503, jsonHeaders, $jsonError("provider_unavailable")
+      let response = apiProviderFailureResponse(apiProviderUnavailable)
+      resp response.status, jsonHeaders, response.body
     else:
       resp Http503, showError("Network error occurred, please try again.", cfg)
 
   error RateLimitError:
     if request.path.startsWith("/api/"):
-      resp Http429, jsonHeaders, $jsonError("provider_rate_limited")
+      let response = apiProviderFailureResponse(apiProviderRateLimited)
+      resp response.status, jsonHeaders, response.body
     else:
       const link = a("another instance", href = instancesUrl)
       resp Http429, showError(
@@ -117,7 +119,8 @@ routes:
 
   error NoSessionsError:
     if request.path.startsWith("/api/"):
-      resp Http429, jsonHeaders, $jsonError("provider_rate_limited")
+      let response = apiProviderFailureResponse(apiProviderRateLimited)
+      resp response.status, jsonHeaders, response.body
     else:
       const link = a("another instance", href = instancesUrl)
       resp Http429, showError(

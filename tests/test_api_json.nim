@@ -1,9 +1,18 @@
-import std/[json, options, unittest]
+import std/[httpcore, json, options, unittest]
 
 import ../src/routes/api_router
 import ../src/types
 
 suite "API JSON serialization":
+  test "maps provider availability failures to stable JSON responses":
+    let unavailable = apiProviderFailureResponse(apiProviderUnavailable)
+    check unavailable.status == Http503
+    check parseJson(unavailable.body)["error"].getStr == "provider_unavailable"
+
+    let rateLimited = apiProviderFailureResponse(apiProviderRateLimited)
+    check rateLimited.status == Http429
+    check parseJson(rateLimited.body)["error"].getStr == "provider_rate_limited"
+
   test "converts relative API media and route URLs to native absolute URLs":
     let tweet = Tweet(
       id: 1,

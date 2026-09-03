@@ -12,8 +12,21 @@ const
   jsonHeaders* = {"Content-Type": "application/json; charset=utf-8"}
   validUsernameChars = {'a'..'z', 'A'..'Z', '0'..'9', '_'}
 
+type
+  ApiProviderFailure* = enum
+    apiProviderUnavailable
+    apiProviderRateLimited
+
 proc jsonError*(message: string): JsonNode =
   %*{"error": message}
+
+proc apiProviderFailureResponse*(failure: ApiProviderFailure):
+    tuple[status: HttpCode, body: string] =
+  case failure
+  of apiProviderUnavailable:
+    (Http503, $jsonError("provider_unavailable"))
+  of apiProviderRateLimited:
+    (Http429, $jsonError("provider_rate_limited"))
 
 proc isValidUsername(name: string): bool =
   name.len > 0 and name.len <= 15 and name.allCharsInSet(validUsernameChars)
