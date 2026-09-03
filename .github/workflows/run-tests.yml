@@ -36,6 +36,11 @@ jobs:
           use-nightlies: true
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpcre3
+
       - name: Build Project
         run: |
           rm -rf "$HOME/.nimble"
