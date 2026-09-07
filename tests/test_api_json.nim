@@ -13,6 +13,14 @@ suite "API JSON serialization":
     check rateLimited.status == Http429
     check parseJson(rateLimited.body)["error"].getStr == "provider_rate_limited"
 
+    let invalid = apiProviderFailureResponse(apiProviderInvalidResponse)
+    check invalid.status == Http502
+    check parseJson(invalid.body)["error"].getStr == "provider_invalid_response"
+
+    let authentication = apiProviderFailureResponse(apiProviderAuthenticationFailed)
+    check authentication.status == Http503
+    check parseJson(authentication.body)["error"].getStr == "provider_authentication_failed"
+
   test "converts relative API media and route URLs to native absolute URLs":
     let tweet = Tweet(
       id: 1,

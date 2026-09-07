@@ -109,9 +109,29 @@ routes:
 
   error InternalError:
     echo error.exc.name, ": ", error.exc.msg
-    const link = a("open a GitHub issue", href = issuesUrl)
-    resp Http500, showError(
-      &"An error occurred, please {link} with the URL you tried to visit.", cfg)
+    if request.path.startsWith("/api/"):
+      let response = apiProviderFailureResponse(apiProviderInvalidResponse)
+      resp response.status, jsonHeaders, response.body
+    else:
+      const link = a("open a GitHub issue", href = issuesUrl)
+      resp Http500, showError(
+        &"An error occurred, please {link} with the URL you tried to visit.", cfg)
+
+  error ProviderUnavailableError:
+    echo error.exc.name, ": ", error.exc.msg
+    if request.path.startsWith("/api/"):
+      let response = apiProviderFailureResponse(apiProviderUnavailable)
+      resp response.status, jsonHeaders, response.body
+    else:
+      resp Http503, showError("Provider is unavailable, please try again later.", cfg)
+
+  error ProviderAuthError:
+    echo error.exc.name, ": ", error.exc.msg
+    if request.path.startsWith("/api/"):
+      let response = apiProviderFailureResponse(apiProviderAuthenticationFailed)
+      resp response.status, jsonHeaders, response.body
+    else:
+      resp Http503, showError("Provider authentication failed, please try again later.", cfg)
 
   error BadClientError:
     echo error.exc.name, ": ", error.exc.msg
@@ -124,7 +144,11 @@ routes:
   error RateLimitError:
     if request.path.startsWith("/api/"):
       let response = apiProviderFailureResponse(apiProviderRateLimited)
-      resp response.status, jsonHeaders, response.body
+      var headers = @jsonHeaders
+      let retryAfter = (ref RateLimitError)(error.exc).retryAfter
+      if retryAfter > 0:
+        headers.add ("Retry-After", $retryAfter)
+      resp response.status, headers, response.body
     else:
       const link = a("another instance", href = instancesUrl)
       resp Http429, showError(

@@ -138,8 +138,9 @@ proc getSessionPoolDebug*(): JsonNode =
 
   return %list
 
-proc rateLimitError*(): ref RateLimitError =
-  newException(RateLimitError, "rate limited")
+proc rateLimitError*(retryAfter = 0): ref RateLimitError =
+  result = newException(RateLimitError, "rate limited")
+  result.retryAfter = max(0, retryAfter)
 
 proc noSessionsError*(): ref NoSessionsError =
   newException(NoSessionsError, "no sessions available")
@@ -180,6 +181,9 @@ proc release*(session: Session) =
   dec session.pending
 
 proc getSession*(req: ApiReq): Future[Session] {.async.} =
+  if sessionPool.len == 0:
+    raise newException(ProviderAuthError, "No authenticated provider sessions available")
+
   for i in 0 ..< sessionPool.len:
     if result.isReady(req): break
     result = sessionPool.sample()
@@ -191,13 +195,17 @@ proc getSession*(req: ApiReq): Future[Session] {.async.} =
       log "no sessions available for API: ", req.cookie.endpoint
     else:
       log "no sessions available for API: ", req.endpoint(result), ", last tried: ", result.pretty
+    for candidate in sessionPool:
+      if not candidate.isLimited(req):
+        raise newException(ProviderUnavailableError, "Provider sessions are busy")
     raise noSessionsError()
 
 proc setLimited*(session: Session; req: ApiReq) =
   let api = req.endpoint(session)
   session.limited = true
   session.limitedAt = epochTime().int
-  log "rate limited by api: ", api, ", reqs left: ", session.apis[api].remaining, ", ", session.pretty
+  let remaining = if api in session.apis: $session.apis[api].remaining else: "unknown"
+  log "rate limited by api: ", api, ", reqs left: ", remaining, ", ", session.pretty
 
 proc setRateLimit*(session: Session; req: ApiReq; remaining, reset, limit: int) =
   # avoid undefined behavior in race conditions

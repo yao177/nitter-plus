@@ -1,11 +1,16 @@
 import std/[asyncdispatch, os, times, unittest]
 
-import ../src/[auth, config, types]
+import ../src/config
+
+include ../src/auth
 
 suite "session token reserve":
   let
     configPath = getTempDir() / "nitter-plus-test-auth.conf"
     sessionsPath = getTempDir() / "nitter-plus-test-auth-sessions.jsonl"
+
+  setup:
+    sessionPool = @[]
 
   teardown:
     for path in [configPath, sessionsPath]:
@@ -34,3 +39,21 @@ suite "session token reserve":
 
     expect NoSessionsError:
       discard waitFor getSession(req)
+
+  test "empty pool is authentication failure rather than rate limiting":
+    let req = ApiReq(cookie: ApiUrl(endpoint: "test-endpoint"))
+    expect ProviderAuthError:
+      discard waitFor getSession(req)
+
+  test "busy sessions are unavailable rather than rate limited":
+    let req = ApiReq(cookie: ApiUrl(endpoint: "test-endpoint"))
+    sessionPool = @[Session(kind: cookie, authToken: "test-token", ct0: "test-csrf", pending: 100)]
+    expect ProviderUnavailableError:
+      discard waitFor getSession(req)
+
+  test "can mark a session limited without optional rate headers":
+    let
+      req = ApiReq(cookie: ApiUrl(endpoint: "test-endpoint"))
+      session = Session(kind: cookie, authToken: "test-token", ct0: "test-csrf")
+    session.setLimited(req)
+    check session.limited

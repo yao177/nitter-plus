@@ -6,9 +6,13 @@ genPrefsType()
 
 type
   RateLimitError* = object of CatchableError
+    retryAfter*: int
   NoSessionsError* = object of CatchableError
   InternalError* = object of CatchableError
   BadClientError* = object of CatchableError
+  ProviderUnavailableError* = object of CatchableError
+  ProviderAuthError* = object of CatchableError
+    retryable*: bool
 
   TimelineKind* {.pure.} = enum
     tweets, replies, media, articles

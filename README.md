@@ -67,6 +67,63 @@ Available endpoints:
 - `GET /api/search/posts?q=...&cursor=...`
 - `POST /api/search/posts` with JSON body `{ "q": "...", "cursor": "..." }`
 
+### Provider Errors / 上游错误
+
+Provider failures return JSON with an `error` field. HTTP 429 means an actual
+upstream rate limit (`provider_rate_limited`); a valid upstream `Retry-After`
+is forwarded in seconds. HTTP 503 reports transport/server failures
+(`provider_unavailable`) or unusable provider credentials
+(`provider_authentication_failed`). Invalid upstream responses return HTTP 502
+(`provider_invalid_response`), never a successful empty result. Caller API-key
+rejection remains HTTP 401 and does not rotate or change the configured key.
+Generic upstream 401/403 responses do not invalidate cookies; explicit credential
+error codes do. Existing resource-level errors remain handled by Nitter's parsers.
+HTTP classification uses numeric status codes, regardless of reason phrases.
+A 404 body with recognized resource-not-found codes keeps the existing parser
+behavior; empty, malformed, or unknown 404 responses remain provider-unavailable.
+
+上游故障返回含 `error` 字段的 JSON。HTTP 429 仅表示真实上游限流
+（`provider_rate_limited`），有效的上游 `Retry-After` 会转换为秒并透传。
+HTTP 503 表示传输或服务故障（`provider_unavailable`），或者上游凭据不可用
+（`provider_authentication_failed`）。无效上游响应返回 HTTP 502
+（`provider_invalid_response`），不会伪装成成功的空结果。调用方 API key
+被拒绝时仍返回 HTTP 401，不会轮换或修改已配置的密钥。普通上游 401/403
+不会使 Cookie 失效；明确的凭据错误码才会移除对应会话。资源级错误仍交由
+Nitter 原有解析器处理。
+HTTP 分类只依据数值状态码，不依赖原因短语。404 响应中的已识别资源不存在
+错误仍交由原有解析器处理；空、损坏或未知的 404 响应仍归为上游不可用。
+
+Offline regression tests require a compiled `./nitter`, Python 3, and
+`redis-server` or `valkey-server`. They use disposable loopback-only instances
+and fake credentials, without contacting X:
+
+离线回归测试需要已编译的 `./nitter`、Python 3 和 `redis-server` 或
+`valkey-server`。测试使用仅绑定本机回环地址的临时实例与假凭据，不访问 X：
+
+```bash
+nim c -r tests/test_provider_errors.nim
+nim c -r tests/test_apiutils_retry.nim
+python3 tests/test_provider_http.py
+```
+
+To verify every fork-added API against a running instance, use the bounded live
+contract runner below. It tests both authentication headers, input validation,
+all seven API operations, and actual next-page cursors. A missing cursor remains
+explicitly unverified. Rate limiting or provider authentication failure stops
+the run; `--only` selects unfinished operations for a later targeted check.
+The report contains no credentials, response bodies, or raw cursors.
+
+使用以下有界真实契约测试验证运行实例相对上游新增的全部 API，覆盖两种鉴权头、
+输入校验、七个 API 操作和实际下一页游标。缺少游标会明确标为未验证；发生限流
+或上游认证失败时立即停止。可使用 `--only` 选择未完成操作定向补测。报告不含凭据、
+响应正文或原始游标。
+
+```bash
+python3 tests/test_api_live_contract.py
+python3 tests/api_live_contract.py --base-url http://127.0.0.1:8080 \
+  --api-key-file /path/to/existing-api-key --username NASA --report api-contract.json
+```
+
 ## Resources
 
 The wiki contains

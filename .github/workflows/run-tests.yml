@@ -50,7 +50,7 @@ jobs:
       - name: Install runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libpcre3
+          sudo apt-get install -y --no-install-recommends libpcre3 redis-server
 
       - name: Build Project
         run: |
@@ -64,6 +64,12 @@ jobs:
           nim c -r tests/test_config.nim
           nim c -r tests/test_auth.nim
           nim c -r tests/test_apiutils_retry.nim
+          nim c -r tests/test_provider_errors.nim
+
+      - name: Run offline provider HTTP contract tests
+        run: |
+          python3 tests/test_api_live_contract.py
+          python3 tests/test_provider_http.py
 
       - name: Run HTTP pool transport tests
         run: nim c -r -d:ssl tests/test_http_pool_transport.nim

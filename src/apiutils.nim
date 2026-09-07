@@ -1,15 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import httpclient, net, asyncdispatch, options, strutils, uri, times, math, tables
-import jsony, packedjson, zippy, oauth/oauth1
-import types, auth, consts, parserutils, http_pool, tid
-import experimental/types/common
+import packedjson, zippy, oauth/oauth1
+import types, auth, consts, http_pool, tid
+import provider_errors
 
 const
   rlRemaining = "x-rate-limit-remaining"
   rlReset = "x-rate-limit-reset"
   rlLimit = "x-rate-limit-limit"
   npCache = "x-np-cache"
-  errorsToSkip = {null, doesntExist, tweetNotFound, timeout, unauthorized, badRequest}
 
 proc isCloudflareHtml*(body: string): bool =
   ## Detect Cloudflare HTML error pages returned instead of JSON
@@ -36,7 +35,7 @@ proc setDisableTid*(disable: bool) =
   disableTid = disable
 
 proc setMaxRetries*(n: int) =
-  maxRetries = n
+  maxRetries = max(1, n)
 
 proc setRetryDelayMs*(ms: int) =
   retryDelayMs = ms
@@ -117,11 +116,36 @@ proc getAndValidateSession*(req: ApiReq): Future[Session] {.async.} =
   of SessionKind.oauth:
     if result.oauthToken.len == 0:
       echo "[sessions] Empty oauth token, session: ", result.pretty
-      raise rateLimitError()
+      invalidate(result)
+      raise newException(ProviderAuthError, "Empty provider OAuth credentials")
   of SessionKind.cookie:
     if result.authToken.len == 0 or result.ct0.len == 0:
       echo "[sessions] Empty cookie credentials, session: ", result.pretty
-      raise rateLimitError()
+      invalidate(result)
+      raise newException(ProviderAuthError, "Empty provider cookie credentials")
+
+proc checkProviderCredentials(codes: seq[int]; session: var Session) =
+  for code in codes:
+    if code in [ord(expiredToken), ord(badToken), ord(locked), ord(couldntAuth), ord(noCsrf)]:
+      invalidate(session)
+      let error = newException(ProviderAuthError, "Provider rejected session credentials (code " & $code & ")")
+      error.retryable = true
+      raise error
+
+proc checkProviderErrors(node: JsonNode; session: var Session; req: ApiReq;
+                         retryAfter: int) =
+  let codes = providerErrorCodes(node)
+  checkProviderCredentials(codes, session)
+  if ord(rateLimited) in codes:
+    setLimited(session, req)
+    raise rateLimitError(retryAfter)
+  for code in codes:
+    # Keep resource-level errors available to the existing timeline/user parsers.
+    if code notin [ord(null), ord(noUserMatches), ord(protectedUser), ord(timeout),
+                   ord(doesntExist), ord(unauthorized), ord(userNotFound), ord(suspended),
+                   ord(tweetNotFound), ord(tweetNotAuthorized), ord(forbidden),
+                   ord(badRequest), ord(tweetUnavailable), ord(tweetCensored)]:
+      raise newException(InternalError, "Provider returned error code " & $code)
 
 template fetchImpl(result, fetchBody) {.dirty.} =
   once:
@@ -145,51 +169,77 @@ template fetchImpl(result, fetchBody) {.dirty.} =
 
       getContent()
 
-      if resp.status == $Http503:
+      if resp.code == Http503:
         badClient = true
         raise newException(BadClientError, "Bad client")
 
-      if resp.status == $Http404 and result.len == 0:
-        echo "[sessions] transient 404 (empty body), retrying: ", url.path, ", session: ", session.pretty
-        raise rateLimitError()
-
     let cacheStatus = resp.headers.getOrDefault(npCache)
     if cacheStatus notin ["HIT", "STALE"] and resp.headers.hasKey(rlRemaining):
-      let
-        remaining = parseInt(resp.headers[rlRemaining])
-        reset = parseInt(resp.headers[rlReset])
-        limit = parseInt(resp.headers[rlLimit])
-      session.setRateLimit(req, remaining, reset, limit)
+      try:
+        let
+          remaining = parseInt(resp.headers.getOrDefault(rlRemaining))
+          reset = parseInt(resp.headers.getOrDefault(rlReset))
+          limit = parseInt(resp.headers.getOrDefault(rlLimit))
+        if remaining >= 0 and reset >= 0 and limit >= 0:
+          session.setRateLimit(req, remaining, reset, limit)
+      except ValueError:
+        echo "[sessions] Ignoring invalid rate-limit headers, API: ", url.path
+
+    let retryAfter = retryAfterSeconds(resp.headers)
+    case classifyHttpStatus(resp.code)
+    of httpRateLimited:
+      raise rateLimitError(retryAfter)
+    of httpAuthenticationFailed:
+      # A proxy denial or generic 403 does not prove the cookie is invalid.
+      # Only explicit credential error codes invalidate a session.
+      try:
+        let body = if resp.headers.getOrDefault("content-encoding") == "gzip": uncompress(result, dfGzip)
+                   else: result
+        checkProviderCredentials(providerErrorCodes(parseProviderResponse(body)), session)
+      except ProviderAuthError:
+        raise
+      except CatchableError:
+        discard
+      raise newException(ProviderAuthError, "Provider returned HTTP " & resp.status)
+    of httpBadClient:
+      raise newException(ProviderUnavailableError, "Provider returned HTTP " & resp.status)
+    of httpUnavailable:
+      var resourceNotFound = false
+      if resp.code == Http404:
+        try:
+          let body = if resp.headers.getOrDefault("content-encoding") == "gzip": uncompress(result, dfGzip)
+                     else: result
+          resourceNotFound = isResourceNotFoundResponse(body)
+        except CatchableError:
+          discard
+      if not resourceNotFound:
+        raise newException(ProviderUnavailableError, "Provider returned HTTP " & resp.status)
+    of httpInvalidResponse:
+      raise newException(InternalError, "Provider returned HTTP " & resp.status)
+    of httpSuccess:
+      discard
 
     if result.len > 0:
       if resp.headers.getOrDefault("content-encoding") == "gzip":
         result = uncompress(result, dfGzip)
 
-      if isCloudflareHtml(result):
+      if isCloudflareHtml(result.strip):
         echo "[cloudflare] ", resp.status, " (", cfTitle(result), "), API: ", url.path, ", session: ", session.pretty
-        raise rateLimitError()
+        raise newException(ProviderUnavailableError, "Provider returned a Cloudflare error page")
 
-      if result.startsWith("{\"errors"):
-        let errors = result.fromJson(Errors)
-        if errors notin errorsToSkip:
-          echo "Fetch error, API: ", url.path, ", errors: ", errors, ", session: ", session.pretty
-          if errors in {expiredToken, badToken, locked}:
-            invalidate(session)
-            raise rateLimitError()
-          elif errors in {rateLimited}:
-            # rate limit hit, resets after 24 hours
-            setLimited(session, req)
-            raise rateLimitError()
-      elif result.startsWith("429 Too Many Requests"):
+      if result.strip.startsWith("429 Too Many Requests"):
         echo "[sessions] 429 error, API: ", url.path, ", session: ", session.pretty
-        raise rateLimitError()
+        raise rateLimitError(retryAfter)
 
     fetchBody
 
-    if resp.status == $Http400:
-      echo "ERROR 400, ", url.path, ": ", result, ", session: ", session.pretty
-      raise newException(InternalError, $url)
   except InternalError as e:
+    raise e
+  except RateLimitError as e:
+    raise e
+  except ProviderAuthError as e:
+    raise e
+  except ProviderUnavailableError as e:
     raise e
   except BadClientError as e:
     raise e
@@ -201,35 +251,54 @@ template fetchImpl(result, fetchBody) {.dirty.} =
     raise newException(BadClientError, e.msg)
   except OSError as e:
     raise newException(BadClientError, e.msg)
-  except Exception as e:
+  except CatchableError as e:
     let s = session.pretty
     echo "error: ", e.name, ", msg: ", e.msg, ", session: ", s, ", url: ", url
-    raise rateLimitError()
+    raise newException(InternalError, "Provider response processing failed: " & $e.name)
   finally:
     release(session)
 
 template retry(bod) {.dirty.} =
   var session: Session
   var retrySuccess = false
+  var lastFailure: ref CatchableError
   for i in 0 ..< maxRetries:
     try:
       session = nil
       bod
       retrySuccess = true
       break
-    except RateLimitError:
+    except NoSessionsError:
+      if not lastFailure.isNil:
+        raise lastFailure
+      raise
+    except ProviderAuthError as e:
+      if not e.retryable:
+        raise
+      lastFailure = e
+      if i + 1 >= maxRetries:
+        break
+      echo "[sessions] Rejected credentials, trying another session (", i + 1, "/", maxRetries, ")..."
+      if retryDelayMs > 0:
+        await sleepAsync(retryDelayMs)
+    except RateLimitError as e:
+      lastFailure = e
+      if i + 1 >= maxRetries:
+        break
       let api = if session.isNil: req.cookie.endpoint
                 else: req.endpoint(session)
       if session.isNil:
         echo "[sessions] Rate limited, retrying ", api,
-             " request (", i, "/", maxRetries, ")..."
+             " request (", i + 1, "/", maxRetries, ")..."
       else:
         echo "[sessions] Rate limited, retrying ", api,
-             " request (", i, "/", maxRetries, ")..., session: ", session.pretty
+             " request (", i + 1, "/", maxRetries, ")..., session: ", session.pretty
       session = nil
       if retryDelayMs > 0:
         await sleepAsync(retryDelayMs)
   if not retrySuccess:
+    if not lastFailure.isNil:
+      raise lastFailure
     raise rateLimitError()
 
 proc fetch*(req: ApiReq): Future[JsonNode] {.async.} =
@@ -240,18 +309,8 @@ proc fetch*(req: ApiReq): Future[JsonNode] {.async.} =
     let url = req.toUrl(session.kind)
 
     fetchImpl body:
-      if body.startsWith('{') or body.startsWith('['):
-        result = parseJson(body)
-      else:
-        echo resp.status, ": ", body, " --- url: ", url, ", session: ", session.pretty
-        result = newJNull()
-
-      let error = result.getError
-      if error != null and error notin errorsToSkip:
-        echo "Fetch error, API: ", url.path, ", error: ", error, ", session: ", session.pretty
-        if error in {expiredToken, badToken, locked}:
-          invalidate(session)
-          raise rateLimitError()
+      result = parseProviderResponse(body)
+      checkProviderErrors(result, session, req, retryAfter)
 
 proc fetchRaw*(req: ApiReq): Future[string] {.async.} =
   retry:
@@ -259,6 +318,6 @@ proc fetchRaw*(req: ApiReq): Future[string] {.async.} =
     let url = req.toUrl(session.kind)
 
     fetchImpl result:
-      if not (result.startsWith('{') or result.startsWith('[')):
-        echo resp.status, ": ", result, " --- url: ", url, ", session: ", session.pretty
-        result.setLen(0)
+      let parsed = parseProviderResponse(result)
+      checkProviderErrors(parsed, session, req, retryAfter)
+      result = result.strip

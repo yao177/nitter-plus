@@ -16,6 +16,8 @@ type
   ApiProviderFailure* = enum
     apiProviderUnavailable
     apiProviderRateLimited
+    apiProviderInvalidResponse
+    apiProviderAuthenticationFailed
 
 proc jsonError*(message: string): JsonNode =
   %*{"error": message}
@@ -27,6 +29,10 @@ proc apiProviderFailureResponse*(failure: ApiProviderFailure):
     (Http503, $jsonError("provider_unavailable"))
   of apiProviderRateLimited:
     (Http429, $jsonError("provider_rate_limited"))
+  of apiProviderInvalidResponse:
+    (Http502, $jsonError("provider_invalid_response"))
+  of apiProviderAuthenticationFailed:
+    (Http503, $jsonError("provider_authentication_failed"))
 
 proc isValidUsername(name: string): bool =
   name.len > 0 and name.len <= 15 and name.allCharsInSet(validUsernameChars)
